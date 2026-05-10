@@ -21,33 +21,20 @@ env:
   IMAGE_REF: ghcr.io/${{ github.repository_owner }}/comfyui-runpod
 
 jobs:
-  release:
+  # Cheap precondition check that runs once. Fails fast if the workflow was
+  # invoked against something other than a real git tag pointing at HEAD.
+  verify:
+    name: Verify release preconditions
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      git_sha: ${{ steps.provenance.outputs.git_sha }}
+      build_date: ${{ steps.provenance.outputs.build_date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0   # need full history + tags for the verification step
-
-      - name: Free disk space
-        run: |
-          rm -rf /usr/share/dotnet
-          rm -rf /opt/ghc
-          rm -rf "/usr/local/share/boost"
-          rm -rf "$AGENT_TOOLSDIRECTORY"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve release version
         id: version
@@ -89,49 +76,75 @@ jobs:
           echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push CUDA 13.0 image (Blackwell)
-        uses: docker/bake-action@v5
-        env:
-          TAG: ${{ steps.version.outputs.version }}
-          IMAGE_REF: ${{ env.IMAGE_REF }}
-          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
-          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
-        with:
-          push: true
-          files: ./docker-bake.hcl
-          targets: cu130
+  # Build cu128 and cu130 in parallel on SEPARATE runners. Sequential builds
+  # on one runner (the prior layout) ran the second build out of disk: a
+  # single ComfyUI variant peaks at ~15 GB (wheels + builder layers + final
+  # ~10 GB image) on a 14 GB ubuntu-latest runner. Matrix gives each variant
+  # its own filesystem.
+  build:
+    name: Build (${{ matrix.variant }})
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # let the other variant finish so partial-publish state is visible
+      matrix:
+        variant: [cu128, cu130]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Clean up Docker build cache
+      - name: Free disk space
         run: |
-          docker builder prune -af --filter "until=1h"
-          docker system prune -af --volumes
+          rm -rf /usr/share/dotnet
+          rm -rf /opt/ghc
+          rm -rf "/usr/local/share/boost"
+          rm -rf "$AGENT_TOOLSDIRECTORY"
 
-      - name: Build and push CUDA 12.8 image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.variant }}
         uses: docker/bake-action@v5
         env:
-          TAG: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.verify.outputs.version }}
           IMAGE_REF: ${{ env.IMAGE_REF }}
-          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
-          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
+          GIT_SHA: ${{ needs.verify.outputs.git_sha }}
+          BUILD_DATE: ${{ needs.verify.outputs.build_date }}
         with:
           push: true
           files: ./docker-bake.hcl
-          targets: cu128
+          targets: ${{ matrix.variant }}
 
+  # Create the GitHub Release and print a summary only after both builds
+  # have pushed successfully. If either build fails, no GH release is
+  # created — but any image that did push stays in GHCR (intentional;
+  # makes partial-publish state visible for triage).
+  release-notes:
+    name: Publish release notes
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    steps:
       - name: Create GitHub Release
         if: github.event_name != 'release'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.verify.outputs.version }}
+          name: ${{ needs.verify.outputs.version }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Release summary
         run: |
-          V="${{ steps.version.outputs.version }}"
-          SHA="${{ steps.provenance.outputs.git_sha }}"
+          V="${{ needs.verify.outputs.version }}"
+          SHA="${{ needs.verify.outputs.git_sha }}"
           echo "Release ${V} (commit ${SHA})"
           echo "Images pushed:"
           echo "  ${IMAGE_REF}:${V}-cu128"

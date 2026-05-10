@@ -25,6 +25,7 @@ JupyterLab and FileBrowser are intentionally **not** bundled. RunPod's web UI ha
 - `scripts/prebake-manager-cache.py` — pre-fetches ComfyUI-Manager registry at build time
 - `.github/workflows/release.yml` — tag-driven release build (pushes to GHCR)
 - `.github/workflows/dev.yml` — manual dev build (pushes `:dev-cu128` / `:dev-cu130`)
+- `.github/workflows/pr-build.yml` — automatic build verify on every PR against `main` (no push; merge gate)
 
 At runtime the container expects a RunPod **Network Volume** (or pod volume) mounted at `/workspace`:
 

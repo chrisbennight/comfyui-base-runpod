@@ -24,6 +24,7 @@ Published publicly to GHCR as `ghcr.io/chrisbennight/comfyui-runpod`. Two CUDA v
 | `scripts/prebake-manager-cache.py` | Pre-fetches the ComfyUI-Manager registry at build time so first cold start doesn't paginate ~127 requests against `api.comfy.org`. |
 | `.github/workflows/release.yml` | Tag-driven build that pushes `:vX.Y.Z-cu128`, `:cu128`, `:latest`, `:vX.Y.Z-cu130`, `:cu130` to GHCR. Auths with `GITHUB_TOKEN` (no DockerHub secrets). |
 | `.github/workflows/dev.yml` | Manual workflow that pushes `:dev-cu128` and `:dev-cu130` without touching `:latest`. |
+| `.github/workflows/pr-build.yml` | Automatic on every PR against `main`. Builds both variants in parallel without pushing — merge gate. Uses GHA cache so iterative pushes on the same PR are fast. |
 | `docs/context.md` | Detailed dev notes (build targets, ports, env vars, troubleshooting). Read this before making non-trivial changes. |
 | `CHANGELOG.md` | Has a "fork divergence" section at the top documenting how this image differs from upstream `runpod-workers/comfyui-base`. |
 
@@ -85,6 +86,8 @@ The template exists because this repo is small and personal but published — co
 
 If a PR is genuinely trivial (typo, comment fix), say so in the Intent section and leave the rest minimal — but use the template structure.
 
+Every PR also triggers the **PR Build Verify** workflow which builds both `cu128` and `cu130` variants. The build must succeed before merge. To make this enforced, configure branch protection in `Settings → Branches → Branch protection rules` for `main` to require the `Build (cu128)` and `Build (cu130)` checks; otherwise the workflow runs but failures don't block merge.
+
 ## Validate before pushing
 
 The image is large (~10 GB) and pulls ~5 GB of wheels — local builds are slow. Use these gates instead of full builds when iterating:
@@ -100,7 +103,9 @@ bash -n start.sh scripts/fetch-hashes.sh scripts/download-models.sh
 docker buildx build --check -f Dockerfile .
 ```
 
-For real validation, push a branch and trigger the **Dev Build** workflow with `push=true`. It builds both variants on GHA and pushes `:dev-cu{128,130}`. That's the cheapest "did this actually work" loop.
+For real validation, the **PR Build Verify** workflow runs automatically on every PR against `main`. It builds both `cu128` and `cu130` variants in parallel without pushing, using GHA cache so re-builds on the same branch are fast. A failing build blocks the merge.
+
+If you need to iterate before opening a PR, trigger the **Dev Build** workflow manually with `push=true`. It builds both variants on GHA and pushes `:dev-cu{128,130}`.
 
 Avoid running `docker buildx bake dev` locally unless you actually need to iterate on something the bake/syntax checks can't catch — it'll re-pull all the wheels.
 

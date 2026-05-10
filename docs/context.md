@@ -88,13 +88,14 @@ This closes the `workflow_dispatch` footgun where you could previously publish a
 `start.sh`:
 
 1. Set up SSH. If `PUBLIC_KEY` is set, install it for root; otherwise generate a random root password and print it.
-2. Propagate selected env vars (`RUNPOD_*`, `CUDA*`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `HF_*`) into `/etc/environment`, PAM, and `~/.ssh/environment` so SSH/non-interactive shells inherit them.
-3. Ensure `/workspace/comfyui_args.txt` exists.
-4. **First boot**: `cp -r /opt/comfyui-baked /workspace/ComfyUI`, then `python3.12 -m venv --system-site-packages /workspace/ComfyUI/.venv` and `python -m ensurepip`.
-5. **Subsequent boots**: just activate the existing venv.
-6. If `BOOTSTRAP_MODELS=1`, run `download-models.sh` (idempotent — skips files that already exist).
-7. Launch ComfyUI in foreground with `--listen 0.0.0.0 --port 8188 --enable-cors-header` plus anything in `comfyui_args.txt`.
-8. If ComfyUI exits, `sleep infinity` keeps the container alive so SSH stays accessible for debugging.
+2. Ensure `/workspace` exists, then point `HF_HOME` and `TORCH_HOME` at `/workspace/.cache/{huggingface,torch}` (creating the dirs). Honors user-provided values if already set.
+3. Propagate selected env vars (`RUNPOD_*`, `CUDA*`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `HF_*`, `TORCH_HOME`) into `/etc/environment`, PAM, and `~/.ssh/environment` so SSH/non-interactive shells inherit them.
+4. Ensure `/workspace/comfyui_args.txt` exists.
+5. **First boot**: `cp -r /opt/comfyui-baked /workspace/ComfyUI`, then `python3.12 -m venv --system-site-packages /workspace/ComfyUI/.venv` and `python -m ensurepip`.
+6. **Subsequent boots**: just activate the existing venv.
+7. If `BOOTSTRAP_MODELS=1`, run `download-models.sh` (idempotent — skips files that already exist).
+8. Launch ComfyUI in foreground with `--listen 0.0.0.0 --port 8188 --enable-cors-header` plus anything in `comfyui_args.txt`.
+9. If ComfyUI exits, `sleep infinity` keeps the container alive so SSH stays accessible for debugging.
 
 Custom nodes installed at runtime via ComfyUI-Manager land under `/workspace/ComfyUI/custom_nodes/` and persist with the volume.
 
@@ -113,6 +114,8 @@ That's it. The image does **not** expose 8080 or 8888.
 | `BOOTSTRAP_MODELS` | If `1`, run `download-models.sh` on first boot. |
 | `MODEL_SETS` | Comma-separated set names (`anima,flux-dev-fp8,flux-dev-fp16,wan-gguf,ltx-video,upscalers`). Default: `anima,flux-dev-fp8,wan-gguf,ltx-video`. |
 | `HF_TOKEN` | Hugging Face token for gated downloads; propagated to SSH/Jupyter shells. |
+| `HF_HOME` | HF cache root. Defaults to `/workspace/.cache/huggingface` so weights cached by `transformers` / `diffusers` / `huggingface_hub` survive pod swaps. |
+| `TORCH_HOME` | PyTorch hub cache root. Defaults to `/workspace/.cache/torch`. |
 | `COMFYUI_MODELS_DIR` | Override the bootstrap target dir (default `/workspace/ComfyUI/models`). |
 | RunPod-injected `RUNPOD_*` | Forwarded to interactive shells. |
 

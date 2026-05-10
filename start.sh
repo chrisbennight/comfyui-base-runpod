@@ -35,6 +35,17 @@ setup_ssh() {
     /usr/sbin/sshd
 }
 
+# Point HF and torch caches at the persistent volume so model downloads
+# triggered at runtime (transformers, diffusers, torch.hub, etc.) survive
+# pod swaps. User-provided values are honored.
+setup_caches() {
+    export HF_HOME="${HF_HOME:-/workspace/.cache/huggingface}"
+    export TORCH_HOME="${TORCH_HOME:-/workspace/.cache/torch}"
+    mkdir -p "$HF_HOME" "$TORCH_HOME"
+    echo "[cache] HF_HOME=$HF_HOME"
+    echo "[cache] TORCH_HOME=$TORCH_HOME"
+}
+
 # Propagate selected env vars so SSH/non-interactive shells inherit them
 export_env_vars() {
     ENV_FILE="/etc/environment"
@@ -49,7 +60,7 @@ export_env_vars() {
     mkdir -p /root/.ssh
     > "$SSH_ENV_DIR"
 
-    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^HF_|^HUGGING' | while read -r line; do
+    printenv | grep -E '^RUNPOD_|^PATH=|^_=|^CUDA|^LD_LIBRARY_PATH|^PYTHONPATH|^HF_|^HUGGING|^TORCH_HOME' | while read -r line; do
         name=$(echo "$line" | cut -d= -f1)
         value=$(echo "$line" | cut -d= -f2-)
         echo "$name=\"$value\"" >> "$ENV_FILE"
@@ -70,9 +81,9 @@ export_env_vars() {
 # ---------------------------------------------------------------------------- #
 
 setup_ssh
-export_env_vars
-
 mkdir -p /workspace
+setup_caches
+export_env_vars
 
 if [ ! -f "$ARGS_FILE" ]; then
     cat > "$ARGS_FILE" <<'EOF'

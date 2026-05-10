@@ -118,6 +118,9 @@ Restart the pod (or `kill` ComfyUI inside the pod) for changes to apply.
 │   ├── user/           # workflows, settings, Manager cache
 │   ├── custom_nodes/   # baked nodes + anything Manager installs
 │   └── .venv/          # python venv (uses --system-site-packages)
+├── .cache/
+│   ├── huggingface/    # HF_HOME — transformers/diffusers cache
+│   └── torch/          # TORCH_HOME — torch.hub cache
 └── comfyui_args.txt    # extra CLI flags for ComfyUI
 ```
 
@@ -129,6 +132,8 @@ Restart the pod (or `kill` ComfyUI inside the pod) for changes to apply.
 | `BOOTSTRAP_MODELS` | Set to `1` to run `download-models.sh` on first boot. |
 | `MODEL_SETS` | Comma-separated set names for the bootstrap (`anima,flux-dev-fp8,flux-dev-fp16,wan-gguf,ltx-video,upscalers`). |
 | `HF_TOKEN` | Hugging Face token, used by the bootstrap and propagated to SSH/Jupyter shells. |
+| `HF_HOME` | Hugging Face cache root. Defaults to `/workspace/.cache/huggingface` so cached model weights survive pod swaps. |
+| `TORCH_HOME` | PyTorch hub cache root. Defaults to `/workspace/.cache/torch` for the same reason. |
 | `COMFYUI_MODELS_DIR` | Override the bootstrap target dir (default `/workspace/ComfyUI/models`). |
 
 ## Local development

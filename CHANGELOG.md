@@ -29,6 +29,7 @@ Targets video (Wan / LTX) and image (Flux / SDXL / Anima) workflows.
 - `scripts/download-models.sh` — opt-in bootstrap for Anima, Flux, Wan 2.2 GGUF, LTX-Video, upscalers. Triggered by `BOOTSTRAP_MODELS=1` or invoked manually. Idempotent (skips files that already exist), uses `aria2c` with 8 parallel connections.
 - `aria2` and `huggingface_hub[cli]` baked into the image for model downloads.
 - `HF_TOKEN` and `HF_*` env vars propagated to SSH/non-interactive shells.
+- `HF_HOME` and `TORCH_HOME` default to `/workspace/.cache/huggingface` and `/workspace/.cache/torch` so model weights cached at runtime by `transformers` / `diffusers` / `huggingface_hub` / `torch.hub` persist with the volume across pod swaps. Honors user-provided values.
 
 ### Pre-fork history
 

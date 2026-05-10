@@ -178,6 +178,10 @@ ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
 
+# ---- Caddy version pin (set in docker-bake.hcl) ----
+ARG CADDY_VERSION
+ARG CADDY_SHA256
+
 # Update and install runtime dependencies, CUDA, and common tools
 RUN apt-get update && \
     apt-get upgrade -y && \
@@ -244,6 +248,16 @@ RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/
 # Workspace = mount point for the RunPod Network Volume (or pod volume)
 RUN mkdir -p /workspace
 WORKDIR /workspace
+
+# Install Caddy (pinned version + SHA256). Used by start.sh as a reverse proxy
+# in front of ComfyUI when ALLOWED_IPS is set, to enforce a source-IP allowlist.
+RUN curl -fSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" -o /tmp/caddy.tgz && \
+    echo "${CADDY_SHA256}  /tmp/caddy.tgz" | sha256sum -c - && \
+    tar xzf /tmp/caddy.tgz -C /usr/local/bin caddy && \
+    rm /tmp/caddy.tgz && \
+    mkdir -p /etc/caddy
+
+COPY caddy/Caddyfile /etc/caddy/Caddyfile
 
 # Copy bootstrap scripts
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh

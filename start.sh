@@ -46,6 +46,40 @@ setup_caches() {
     echo "[cache] TORCH_HOME=$TORCH_HOME"
 }
 
+# If ALLOWED_IPS is set, start Caddy as a reverse proxy in front of ComfyUI
+# with a source-IP allowlist. Caddy listens on 0.0.0.0:8188 (the port RunPod
+# exposes) and forwards to ComfyUI on 127.0.0.1:8189. ComfyUI itself is bound
+# to localhost so the only way in is through Caddy's allowlist.
+#
+# When ALLOWED_IPS is unset, ComfyUI binds to 127.0.0.1:8188 and Caddy is not
+# started — access via SSH tunnel only.
+maybe_start_caddy() {
+    if [ -z "${ALLOWED_IPS:-}" ]; then
+        echo "[caddy] ALLOWED_IPS unset — Caddy NOT started."
+        echo "[caddy] ComfyUI will bind to 127.0.0.1 only; reach it via SSH tunnel:"
+        echo "[caddy]   ssh -L 8188:localhost:8188 root@<pod>.proxy.runpod.net"
+        COMFY_LISTEN="127.0.0.1"
+        COMFY_PORT=8188
+        return
+    fi
+    echo "[caddy] ALLOWED_IPS=${ALLOWED_IPS} — starting Caddy with source-IP allowlist."
+    export ALLOWED_IPS
+    COMFY_LISTEN="127.0.0.1"
+    COMFY_PORT=8189
+    mkdir -p /var/log
+    nohup caddy run --config /etc/caddy/Caddyfile --adapter caddyfile \
+        > /var/log/caddy.log 2>&1 &
+    CADDY_PID=$!
+    sleep 1
+    if ! kill -0 "$CADDY_PID" 2>/dev/null; then
+        echo "[caddy] ERROR: Caddy failed to start. Tail of /var/log/caddy.log:"
+        tail -30 /var/log/caddy.log || true
+        exit 1
+    fi
+    echo "[caddy] Caddy running (pid $CADDY_PID): 0.0.0.0:8188 -> 127.0.0.1:8189"
+    echo "[caddy] Verify your detected IP: GET /__whoami"
+}
+
 # Propagate selected env vars so SSH/non-interactive shells inherit them
 export_env_vars() {
     ENV_FILE="/etc/environment"
@@ -83,6 +117,7 @@ export_env_vars() {
 setup_ssh
 mkdir -p /workspace
 setup_caches
+maybe_start_caddy
 export_env_vars
 
 if [ ! -f "$ARGS_FILE" ]; then
@@ -124,7 +159,7 @@ fi
 
 # Launch ComfyUI; keep container alive on crash so SSH stays accessible
 cd "$COMFYUI_DIR"
-FIXED_ARGS="--listen 0.0.0.0 --port 8188 --enable-cors-header"
+FIXED_ARGS="--listen ${COMFY_LISTEN} --port ${COMFY_PORT} --enable-cors-header"
 if [ -s "$ARGS_FILE" ]; then
     CUSTOM_ARGS=$(grep -v '^#' "$ARGS_FILE" | tr '\n' ' ')
     if [ -n "$CUSTOM_ARGS" ]; then
@@ -135,7 +170,7 @@ fi
 echo "[comfyui] Starting with args: $FIXED_ARGS"
 python main.py $FIXED_ARGS &
 COMFY_PID=$!
-trap "kill $COMFY_PID 2>/dev/null" SIGTERM SIGINT
+trap "kill \$COMFY_PID 2>/dev/null; [ -n \"\${CADDY_PID:-}\" ] && kill \$CADDY_PID 2>/dev/null" SIGTERM SIGINT
 wait $COMFY_PID || true
 
 cat <<EOF

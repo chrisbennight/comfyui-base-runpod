@@ -1,0 +1,75 @@
+# Caddy reverse proxy with IP allowlist.
+#
+# Started by start.sh when ALLOWED_IPS is set on the pod. Caddy listens on
+# 0.0.0.0:8188 (the port RunPod exposes) and forwards to ComfyUI on
+# 127.0.0.1:8189. The `client_ip` matcher denies anything whose detected
+# IP isn't in {$ALLOWED_IPS}.
+#
+# Network path: User -> Cloudflare -> RunPod load balancer -> this pod.
+# Cloudflare adds two headers we care about:
+#   CF-Connecting-IP — single IP, the real client. The reliable signal.
+#   X-Forwarded-For  — comma list; Cloudflare appends the connecting hop.
+#
+# Caddy uses `client_ip_headers` in priority order, so CF-Connecting-IP is
+# tried first; X-Forwarded-For is a fallback (in case Cloudflare is ever
+# removed from the proxy path or the user switches to TCP-exposed ports).
+#
+# Both headers are only trusted if the immediate connection peer matches
+# `trusted_proxies`. RunPod's load balancer connects to the pod from its
+# internal network (RFC1918), so `private_ranges` covers it. Nothing public
+# can reach this Caddy except via RunPod's LB, so trusting private peers
+# to set client-IP headers is safe in this environment.
+
+{
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+	log {
+		output stdout
+		level INFO
+	}
+}
+
+:8188 {
+	# Debug endpoint — always returns 200 with the IPs Caddy detected.
+	# After deploy, hit https://<pod>-8188.proxy.runpod.net/__whoami to verify
+	# Caddy is seeing your real WAN IP. If `client_ip` matches your home IP,
+	# the allowlist will work. If it shows RunPod's internal IP, check
+	# whether CF-Connecting-IP is being preserved by RunPod's LB and adjust.
+	handle /__whoami {
+		respond `client_ip:          {client_ip}
+remote_ip:          {remote_ip}
+cf_connecting_ip:   {>CF-Connecting-IP}
+x_forwarded_for:    {>X-Forwarded-For}
+true_client_ip:     {>True-Client-IP}
+allowed_ips_env:    {$ALLOWED_IPS}
+` 200 {
+			close
+		}
+	}
+
+	@allowed {
+		client_ip {$ALLOWED_IPS}
+	}
+
+	handle @allowed {
+		reverse_proxy 127.0.0.1:8189 {
+			# Pass through WebSocket upgrades (used by ComfyUI's /ws endpoint)
+			# and don't buffer streaming responses.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond `Forbidden: source IP {client_ip} not in ALLOWED_IPS.
+Hit /__whoami to see what IP Caddy detected.
+` 403
+	}
+
+	log {
+		output stdout
+		level INFO
+	}
+}

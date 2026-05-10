@@ -10,7 +10,7 @@ How to work in this repo: build targets, runtime behavior, environment, dependen
   - `cu130` image: CUDA 13.0 + PyTorch cu130 wheels (RTX 5090 / Blackwell / B200, also runs on Hopper/Ada with driver 575+)
 - **Python**: 3.12 (system default)
 - **Package manager**: pip + pip-tools (lockfile generated at build time with `pip-compile --generate-hashes`)
-- **Tools bundled**: OpenSSH server (port 22), FFmpeg (NVENC), `aria2`, `huggingface_hub[cli]`, common CLI tools
+- **Tools bundled**: OpenSSH server (port 22), Caddy (started conditionally on `ALLOWED_IPS`), FFmpeg (NVENC), `aria2`, `huggingface_hub[cli]`, common CLI tools
 - **App**: ComfyUI + 12 pre-installed custom nodes (see README)
 
 JupyterLab and FileBrowser are intentionally **not** bundled. RunPod's web UI handles file browsing and provides a web terminal; we save ~850 MB by dropping them.
@@ -95,8 +95,9 @@ This closes the `workflow_dispatch` footgun where you could previously publish a
 5. **First boot**: `cp -r /opt/comfyui-baked /workspace/ComfyUI`, then `python3.12 -m venv --system-site-packages /workspace/ComfyUI/.venv` and `python -m ensurepip`.
 6. **Subsequent boots**: just activate the existing venv.
 7. If `BOOTSTRAP_MODELS=1`, run `download-models.sh` (idempotent — skips files that already exist).
-8. Launch ComfyUI in foreground with `--listen 0.0.0.0 --port 8188 --enable-cors-header` plus anything in `comfyui_args.txt`.
-9. If ComfyUI exits, `sleep infinity` keeps the container alive so SSH stays accessible for debugging.
+8. If `ALLOWED_IPS` is set, start Caddy on `0.0.0.0:8188` with the source-IP allowlist and set ComfyUI's listen to `127.0.0.1:8189`. If unset, leave Caddy down and bind ComfyUI to `127.0.0.1:8188` (SSH-tunnel only).
+9. Launch ComfyUI in foreground with `--listen <COMFY_LISTEN> --port <COMFY_PORT> --enable-cors-header` plus anything in `comfyui_args.txt`.
+10. If ComfyUI exits, `sleep infinity` keeps the container alive so SSH stays accessible for debugging. (Caddy keeps running too — returns 502 with the allowlist still enforced, useful for debug.)
 
 Custom nodes installed at runtime via ComfyUI-Manager land under `/workspace/ComfyUI/custom_nodes/` and persist with the volume.
 
@@ -112,6 +113,7 @@ That's it. The image does **not** expose 8080 or 8888.
 | Var | Effect |
 |---|---|
 | `PUBLIC_KEY` | Adds an SSH authorized key for root. If unset, a random root password is generated. |
+| `ALLOWED_IPS` | If set, Caddy starts on `0.0.0.0:8188` with a source-IP allowlist and ComfyUI moves to `127.0.0.1:8189`. Space-separated IPs or CIDRs. If unset, ComfyUI binds to `127.0.0.1:8188` only (SSH-tunnel access). |
 | `BOOTSTRAP_MODELS` | If `1`, run `download-models.sh` on first boot. |
 | `MODEL_SETS` | Comma-separated set names (`anima,flux-dev-fp8,flux-dev-fp16,wan-gguf,ltx-video,upscalers`). Default: `anima,flux-dev-fp8,wan-gguf,ltx-video`. |
 | `HF_TOKEN` | Hugging Face token for gated downloads; propagated to SSH/Jupyter shells. |

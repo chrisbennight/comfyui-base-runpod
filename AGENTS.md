@@ -22,6 +22,7 @@ Published publicly to GHCR as `ghcr.io/chrisbennight/comfyui-runpod`. Two CUDA v
 | `scripts/fetch-hashes.sh` | Queries the GitHub API for upstream HEAD SHAs of each pinned custom node and prints HCL-ready `variable` blocks. |
 | `scripts/download-models.sh` | Opt-in model bootstrap (Anima, Flux dev fp8, Wan 2.2 GGUF, LTX-Video, upscalers). Idempotent; uses `aria2c`. Triggered by `BOOTSTRAP_MODELS=1` or invoked manually inside the pod. |
 | `scripts/prebake-manager-cache.py` | Pre-fetches the ComfyUI-Manager registry at build time so first cold start doesn't paginate ~127 requests against `api.comfy.org`. |
+| `caddy/Caddyfile` | Baked config for the Caddy reverse proxy. Started by `start.sh` only when `ALLOWED_IPS` is set on the pod. Enforces a source-IP allowlist using `X-Forwarded-For` (since RunPod's HTTPS proxy terminates TLS before the pod). Exposes a `/__whoami` debug endpoint that always returns the detected client IP. |
 | `.github/workflows/release.yml` | Tag-driven build that pushes `:vX.Y.Z-cu128`, `:cu128`, `:latest`, `:vX.Y.Z-cu130`, `:cu130` to GHCR. Auths with `GITHUB_TOKEN` (no DockerHub secrets). |
 | `.github/workflows/dev.yml` | Manual workflow that pushes `:dev-cu128` and `:dev-cu130` without touching `:latest`. |
 | `.github/workflows/pr-build.yml` | Automatic on every PR against `main`. Builds both variants in parallel without pushing — merge gate. Uses GHA cache so iterative pushes on the same PR are fast. |
@@ -37,7 +38,8 @@ These are load-bearing — break them and the image stops working as designed.
 - **Workspace path is `/workspace/ComfyUI`.** Don't reintroduce the old `/workspace/runpod-slim/` subdirectory. RunPod templates and Network Volumes are configured around `/workspace`.
 - **One Dockerfile, both CUDA variants.** Don't fork into `Dockerfile.cu130`. The build args handle it.
 - **Source archives, not `git clone`.** Build inputs are pinned tarballs from GitHub. After fetch, we `git init` each repo and add an `origin` remote so ComfyUI-Manager can detect updates — but the build itself never depends on git connectivity.
-- **Ports are `8188` (ComfyUI) and `22` (SSH) only.** Don't reopen 8080 or 8888 without updating the README, the RunPod template guidance, and removing the matching service rationale from `docs/context.md`.
+- **Ports are `8188` (ComfyUI or Caddy) and `22` (SSH) only.** Don't reopen 8080 or 8888 without updating the README, the RunPod template guidance, and removing the matching service rationale from `docs/context.md`. Internally, when `ALLOWED_IPS` is set, Caddy holds `0.0.0.0:8188` and ComfyUI moves to `127.0.0.1:8189` — the external port stays `8188` either way.
+- **No built-in auth.** ComfyUI has no login. The image's two access modes are: SSH-tunnel only (default) or Caddy IP allowlist (`ALLOWED_IPS` set). Don't add public, unauthenticated exposure as a default. If a change makes ComfyUI reachable from `0.0.0.0` without an allowlist or auth in front, that's a regression — call it out loudly.
 - **Container stays alive after ComfyUI exits.** `start.sh` does `wait $COMFY_PID || true` followed by `sleep infinity` so SSH stays accessible for debugging.
 
 ## Common change recipes

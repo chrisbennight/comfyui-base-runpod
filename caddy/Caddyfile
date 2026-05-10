@@ -1,0 +1,65 @@
+# Caddy reverse proxy with IP allowlist.
+#
+# Started by start.sh when ALLOWED_IPS is set on the pod. Caddy listens on
+# 0.0.0.0:8188 (the port RunPod exposes) and forwards to ComfyUI on
+# 127.0.0.1:8189. The `client_ip` matcher denies anything whose detected
+# IP isn't in {$ALLOWED_IPS}.
+#
+# RunPod's HTTPS proxy terminates TLS at their edge and forwards plain HTTP
+# to the pod. The pod sees RunPod's internal proxy IP as the connection peer
+# and the real client IP in X-Forwarded-For. We trust RFC1918 private ranges
+# as proxies so Caddy walks XFF to find the real client. Nothing public can
+# reach this Caddy except via RunPod's proxy, so XFF trust is safe in this
+# environment.
+
+{
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers X-Forwarded-For
+	}
+	log {
+		output stdout
+		level INFO
+	}
+}
+
+:8188 {
+	# Debug endpoint — always returns 200 with the IPs Caddy detected.
+	# After deploy, hit https://<pod>-8188.proxy.runpod.net/__whoami to verify
+	# Caddy is seeing your real WAN IP. If `client_ip` matches your home IP,
+	# the allowlist will work. If it shows RunPod's internal IP, your
+	# ALLOWED_IPS env should include that instead (or check trusted_proxies).
+	handle /__whoami {
+		respond `client_ip:        {client_ip}
+remote_ip:        {remote_ip}
+x_forwarded_for:  {>X-Forwarded-For}
+allowed_ips_env:  {$ALLOWED_IPS}
+` 200 {
+			close
+		}
+	}
+
+	@allowed {
+		client_ip {$ALLOWED_IPS}
+	}
+
+	handle @allowed {
+		reverse_proxy 127.0.0.1:8189 {
+			# Pass through WebSocket upgrades (used by ComfyUI's /ws endpoint)
+			# and don't buffer streaming responses.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond `Forbidden: source IP {client_ip} not in ALLOWED_IPS.
+Hit /__whoami to see what IP Caddy detected.
+` 403
+	}
+
+	log {
+		output stdout
+		level INFO
+	}
+}

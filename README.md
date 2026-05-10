@@ -59,13 +59,20 @@ For browser access from a known IP (your home WAN IP, an office IP, a VPN exit),
 | `203.0.113.42` | Caddy on `0.0.0.0:8188`, allow only that IP. ComfyUI on `127.0.0.1:8189`. |
 | `203.0.113.42 198.51.100.0/24` | Multiple IPs / CIDRs, space-separated. |
 
-**First-deploy verification.** RunPod's HTTPS proxy terminates TLS at their edge and forwards plain HTTP to the pod, so Caddy reads the real client IP from `X-Forwarded-For` (trusting RFC1918 proxies). To confirm Caddy is seeing your actual home IP — not RunPod's internal proxy IP — hit the debug endpoint after deploy:
+**Proxy chain.** Requests reach the pod via `User → Cloudflare → RunPod load balancer → pod`. Cloudflare sets two headers we care about:
+
+- `CF-Connecting-IP` — single IP, the real client. Caddy uses this as the primary signal.
+- `X-Forwarded-For` — comma list; Cloudflare appends the connecting hop. Fallback signal if `CF-Connecting-IP` is absent.
+
+Both are honored only when the immediate connection peer is in `trusted_proxies` (`private_ranges` — RunPod's LB connects to the pod from RFC1918).
+
+**First-deploy verification.** Hit the debug endpoint after deploy to confirm Caddy is seeing your real WAN IP:
 
 ```
 https://<pod-id>-8188.proxy.runpod.net/__whoami
 ```
 
-It always returns 200 with `client_ip`, `remote_ip`, the raw `X-Forwarded-For` header, and the parsed `ALLOWED_IPS` env. If `client_ip` doesn't match your home WAN IP (check at `ifconfig.me`), update `ALLOWED_IPS` accordingly.
+It always returns 200 with `client_ip` (Caddy's decision), `remote_ip` (the immediate peer — should be RFC1918), `CF-Connecting-IP`, `X-Forwarded-For`, `True-Client-IP`, and the parsed `ALLOWED_IPS` env. If `client_ip` doesn't match your home WAN IP (check at `ifconfig.me`), look at which header is actually populated and adjust.
 
 **What you give up.** `--require-hashes` doesn't apply here — Caddy itself is pinned by version + SHA256, but its config is loaded at runtime. The allowlist is exactly as strong as the secrecy of `ALLOWED_IPS` and RunPod's proxy isolation.
 

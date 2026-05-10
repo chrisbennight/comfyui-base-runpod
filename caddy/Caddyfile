@@ -5,18 +5,26 @@
 # 127.0.0.1:8189. The `client_ip` matcher denies anything whose detected
 # IP isn't in {$ALLOWED_IPS}.
 #
-# RunPod's HTTPS proxy terminates TLS at their edge and forwards plain HTTP
-# to the pod. The pod sees RunPod's internal proxy IP as the connection peer
-# and the real client IP in X-Forwarded-For. We trust RFC1918 private ranges
-# as proxies so Caddy walks XFF to find the real client. Nothing public can
-# reach this Caddy except via RunPod's proxy, so XFF trust is safe in this
-# environment.
+# Network path: User -> Cloudflare -> RunPod load balancer -> this pod.
+# Cloudflare adds two headers we care about:
+#   CF-Connecting-IP — single IP, the real client. The reliable signal.
+#   X-Forwarded-For  — comma list; Cloudflare appends the connecting hop.
+#
+# Caddy uses `client_ip_headers` in priority order, so CF-Connecting-IP is
+# tried first; X-Forwarded-For is a fallback (in case Cloudflare is ever
+# removed from the proxy path or the user switches to TCP-exposed ports).
+#
+# Both headers are only trusted if the immediate connection peer matches
+# `trusted_proxies`. RunPod's load balancer connects to the pod from its
+# internal network (RFC1918), so `private_ranges` covers it. Nothing public
+# can reach this Caddy except via RunPod's LB, so trusting private peers
+# to set client-IP headers is safe in this environment.
 
 {
 	auto_https off
 	servers {
 		trusted_proxies static private_ranges
-		client_ip_headers X-Forwarded-For
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
 	}
 	log {
 		output stdout
@@ -28,13 +36,15 @@
 	# Debug endpoint — always returns 200 with the IPs Caddy detected.
 	# After deploy, hit https://<pod>-8188.proxy.runpod.net/__whoami to verify
 	# Caddy is seeing your real WAN IP. If `client_ip` matches your home IP,
-	# the allowlist will work. If it shows RunPod's internal IP, your
-	# ALLOWED_IPS env should include that instead (or check trusted_proxies).
+	# the allowlist will work. If it shows RunPod's internal IP, check
+	# whether CF-Connecting-IP is being preserved by RunPod's LB and adjust.
 	handle /__whoami {
-		respond `client_ip:        {client_ip}
-remote_ip:        {remote_ip}
-x_forwarded_for:  {>X-Forwarded-For}
-allowed_ips_env:  {$ALLOWED_IPS}
+		respond `client_ip:          {client_ip}
+remote_ip:          {remote_ip}
+cf_connecting_ip:   {>CF-Connecting-IP}
+x_forwarded_for:    {>X-Forwarded-For}
+true_client_ip:     {>True-Client-IP}
+allowed_ips_env:    {$ALLOWED_IPS}
 ` 200 {
 			close
 		}

@@ -108,14 +108,32 @@ RUN set -eux; \
     init_repo ComfyUI-LTXVideo         Lightricks/ComfyUI-LTXVideo        "${LTXVIDEO_SHA}"; \
     init_repo ComfyUI-GGUF             city96/ComfyUI-GGUF                "${GGUF_SHA}"
 
-# Generate lock file from all requirements (including torch pins), then install with hash verification
+# Generate lock file from all requirements (including torch pins), then install with hash verification.
+#
+# Two passes:
+#   1. PyPI deps go through pip-compile --generate-hashes -> pip install --require-hashes (reproducible, hash-verified).
+#   2. VCS deps (git+/hg+/bzr+/svn+) are filtered out before pip-compile because pip cannot
+#      hash-verify VCS URLs by design. They are installed in a separate, non-hashed step.
+#
+#      As of these node SHAs, the VCS deps are:
+#        - ComfyUI-Impact-Pack -> facebookresearch/sam2 (SAM2 segmentation)
+#        - was-node-suite-comfyui -> WASasquatch/{img2texture, cstr, ffmpy}
+#
+#      Security tradeoff: we pin the parent custom node SHAs, but the VCS URLs themselves
+#      point at upstream HEAD and can drift. Follow-up: pin VCS URLs to specific commits.
+#
+# Each requirements file is appended with a forced trailing newline so a node's
+# requirements.txt without a final \n can't fuse its last line into the next file's first
+# line (e.g. WanVideoWrapper's `scipy` + controlnet_aux's `torch` -> `scipytorch`).
 WORKDIR /tmp/build
-RUN cat ComfyUI/requirements.txt > requirements.in && \
+RUN { cat ComfyUI/requirements.txt; echo; } > requirements.raw && \
     for node_dir in ComfyUI/custom_nodes/*/; do \
         if [ -f "$node_dir/requirements.txt" ]; then \
-            cat "$node_dir/requirements.txt" >> requirements.in; \
+            { cat "$node_dir/requirements.txt"; echo; } >> requirements.raw; \
         fi; \
     done && \
+    grep -E '^(git|hg|bzr|svn)\+' requirements.raw > requirements.vcs.txt || true && \
+    grep -vE '^(git|hg|bzr|svn)\+' requirements.raw > requirements.in && \
     echo "GitPython" >> requirements.in && \
     echo "opencv-python" >> requirements.in && \
     echo "huggingface_hub[cli]" >> requirements.in && \
@@ -131,7 +149,15 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     python3.12 -m pip install --no-cache-dir --ignore-installed --require-hashes \
     --index-url https://pypi.org/simple \
     --extra-index-url "${TORCH_INDEX_URL}" \
-    -r requirements.lock
+    -r requirements.lock && \
+    if [ -s requirements.vcs.txt ]; then \
+        echo "Installing VCS deps (cannot be hash-verified):" && \
+        cat requirements.vcs.txt && \
+        python3.12 -m pip install --no-cache-dir --ignore-installed \
+        --index-url https://pypi.org/simple \
+        --extra-index-url "${TORCH_INDEX_URL}" \
+        -r requirements.vcs.txt; \
+    fi
 
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
@@ -151,6 +177,10 @@ ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
+
+# ---- Caddy version pin (set in docker-bake.hcl) ----
+ARG CADDY_VERSION
+ARG CADDY_SHA256
 
 # Update and install runtime dependencies, CUDA, and common tools
 RUN apt-get update && \
@@ -218,6 +248,16 @@ RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/
 # Workspace = mount point for the RunPod Network Volume (or pod volume)
 RUN mkdir -p /workspace
 WORKDIR /workspace
+
+# Install Caddy (pinned version + SHA256). Used by start.sh as a reverse proxy
+# in front of ComfyUI when ALLOWED_IPS is set, to enforce a source-IP allowlist.
+RUN curl -fSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" -o /tmp/caddy.tgz && \
+    echo "${CADDY_SHA256}  /tmp/caddy.tgz" | sha256sum -c - && \
+    tar xzf /tmp/caddy.tgz -C /usr/local/bin caddy && \
+    rm /tmp/caddy.tgz && \
+    mkdir -p /etc/caddy
+
+COPY caddy/Caddyfile /etc/caddy/Caddyfile
 
 # Copy bootstrap scripts
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh

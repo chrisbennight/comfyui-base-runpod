@@ -30,6 +30,8 @@ Targets video (Wan / LTX) and image (Flux / SDXL / Anima) workflows.
 - `aria2` and `huggingface_hub[cli]` baked into the image for model downloads.
 - `HF_TOKEN` and `HF_*` env vars propagated to SSH/non-interactive shells.
 - `HF_HOME` and `TORCH_HOME` default to `/workspace/.cache/huggingface` and `/workspace/.cache/torch` so model weights cached at runtime by `transformers` / `diffusers` / `huggingface_hub` / `torch.hub` persist with the volume across pod swaps. Honors user-provided values.
+- VCS deps (`git+...`) declared by custom nodes are split out of `requirements.in` before `pip-compile`, then installed in a separate non-hashed step. `pip --require-hashes` cannot verify VCS URLs by design. Currently affects: Impact-Pack's `sam2` and WAS-suite's `img2texture` / `cstr` / `ffmpy`. Parent node SHAs are pinned but the VCS URLs themselves still point at upstream HEAD — follow-up to pin them to specific commits.
+- **Source-IP allowlist via Caddy.** Caddy v2.11.2 baked into the image (pinned SHA256). When `ALLOWED_IPS` is set on the pod, `start.sh` starts Caddy on `0.0.0.0:8188` as a reverse proxy with a `client_ip` matcher, and binds ComfyUI to `127.0.0.1:8189`. Caddy reads `X-Forwarded-For` (RunPod's HTTPS proxy terminates TLS) with private-range trust. A `/__whoami` debug endpoint always returns the detected client IP so you can verify the allowlist matches your actual WAN IP. When `ALLOWED_IPS` is unset, Caddy doesn't start and ComfyUI binds to `127.0.0.1:8188` only — SSH-tunnel access only. The image never publicly exposes ComfyUI without an allowlist.
 
 ### Pre-fork history
 

@@ -49,6 +49,14 @@ variable "GGUF_SHA" {
   default = "6ea2651e7df6"
 }
 
+# === Caddy (reverse proxy with IP allowlist, used when ALLOWED_IPS env is set) ===
+variable "CADDY_VERSION" {
+  default = "2.11.2"
+}
+variable "CADDY_SHA256" {
+  default = "94391dfefe1f278ac8f387ab86162f0e88d87ff97df367f360e51e3cda3df56f"
+}
+
 # === Build provenance (populated by CI from env; empty for local builds) ===
 variable "GIT_SHA" {
   default = ""
@@ -118,6 +126,8 @@ target "common" {
     TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION
     CUDA_VERSION_DASH   = "12-8"
     TORCH_INDEX_SUFFIX  = "cu128"
+    CADDY_VERSION       = CADDY_VERSION
+    CADDY_SHA256        = CADDY_SHA256
   }
 }
 

@@ -37,10 +37,44 @@ A 100 GB Network Volume is enough for Anima + a few Flux/Wan/LTX checkpoints. Ne
 
 ## Ports
 
-- `8188` — ComfyUI web UI
+- `8188` — ComfyUI (directly, or behind Caddy if `ALLOWED_IPS` is set — see below)
 - `22` — SSH (set `PUBLIC_KEY` env or check the pod log for a one-time root password)
 
 > JupyterLab (8888) and FileBrowser (8080) are intentionally **not** included — RunPod's web UI provides equivalent file browsing and a web terminal, and dropping them removes ~850 MB from the image.
+
+## Access control
+
+ComfyUI has no built-in authentication. By default this image binds ComfyUI to `127.0.0.1` so the only way in is an SSH tunnel:
+
+```bash
+ssh -L 8188:localhost:8188 root@<pod>.proxy.runpod.net
+# then visit http://localhost:8188 in your browser
+```
+
+For browser access from a known IP (your home WAN IP, an office IP, a VPN exit), set `ALLOWED_IPS` on the pod and a baked Caddy reverse proxy goes in front with a source-IP allowlist:
+
+| `ALLOWED_IPS` value | Effect |
+|---|---|
+| unset | Caddy not started. ComfyUI on `127.0.0.1:8188`. SSH-tunnel only. |
+| `203.0.113.42` | Caddy on `0.0.0.0:8188`, allow only that IP. ComfyUI on `127.0.0.1:8189`. |
+| `203.0.113.42 198.51.100.0/24` | Multiple IPs / CIDRs, space-separated. |
+
+**Proxy chain.** Requests reach the pod via `User → Cloudflare → RunPod load balancer → pod`. Cloudflare sets two headers we care about:
+
+- `CF-Connecting-IP` — single IP, the real client. Caddy uses this as the primary signal.
+- `X-Forwarded-For` — comma list; Cloudflare appends the connecting hop. Fallback signal if `CF-Connecting-IP` is absent.
+
+Both are honored only when the immediate connection peer is in `trusted_proxies` (`private_ranges` — RunPod's LB connects to the pod from RFC1918).
+
+**First-deploy verification.** Hit the debug endpoint after deploy to confirm Caddy is seeing your real WAN IP:
+
+```
+https://<pod-id>-8188.proxy.runpod.net/__whoami
+```
+
+It always returns 200 with `client_ip` (Caddy's decision), `remote_ip` (the immediate peer — should be RFC1918), `CF-Connecting-IP`, `X-Forwarded-For`, `True-Client-IP`, and the parsed `ALLOWED_IPS` env. If `client_ip` doesn't match your home WAN IP (check at `ifconfig.me`), look at which header is actually populated and adjust.
+
+**What you give up.** `--require-hashes` doesn't apply here — Caddy itself is pinned by version + SHA256, but its config is loaded at runtime. The allowlist is exactly as strong as the secrecy of `ALLOWED_IPS` and RunPod's proxy isolation.
 
 ## Pre-installed custom nodes
 
@@ -131,6 +165,7 @@ Restart the pod (or `kill` ComfyUI inside the pod) for changes to apply.
 | `PUBLIC_KEY` | SSH public key for root. If unset, a random root password is generated and printed to logs. |
 | `BOOTSTRAP_MODELS` | Set to `1` to run `download-models.sh` on first boot. |
 | `MODEL_SETS` | Comma-separated set names for the bootstrap (`anima,flux-dev-fp8,flux-dev-fp16,wan-gguf,ltx-video,upscalers`). |
+| `ALLOWED_IPS` | If set, start Caddy as a reverse proxy in front of ComfyUI with a source-IP allowlist (see Access control below). If unset, ComfyUI binds to `127.0.0.1` only and is reachable via SSH tunnel. |
 | `HF_TOKEN` | Hugging Face token, used by the bootstrap and propagated to SSH/Jupyter shells. |
 | `HF_HOME` | Hugging Face cache root. Defaults to `/workspace/.cache/huggingface` so cached model weights survive pod swaps. |
 | `TORCH_HOME` | PyTorch hub cache root. Defaults to `/workspace/.cache/torch` for the same reason. |

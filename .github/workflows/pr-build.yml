@@ -1,0 +1,63 @@
+name: PR Build Verify
+
+# Build both CUDA variants on every PR against main as a merge gate.
+# Does NOT push images — just verifies the multi-stage build runs end-to-end
+# (custom-node fetch, lockfile generation, hashed pip install, runtime stage).
+# This catches the same class of failures the Release workflow would hit, but
+# before the merge instead of after.
+
+on:
+  pull_request:
+    branches: [main]
+
+# Cancel any in-flight build for the same PR when a new commit is pushed.
+concurrency:
+  group: pr-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # show both variants' failures, not just the first
+      matrix:
+        variant: [cu128, cu130]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          rm -rf /usr/share/dotnet
+          rm -rf /opt/ghc
+          rm -rf "/usr/local/share/boost"
+          rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute build provenance
+        id: provenance
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build ${{ matrix.variant }} (no push)
+        uses: docker/bake-action@v5
+        env:
+          IMAGE_REF: ghcr.io/${{ github.repository_owner }}/comfyui-runpod
+          TAG: pr-${{ github.event.pull_request.number }}
+          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
+          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
+        with:
+          push: false
+          load: false
+          files: ./docker-bake.hcl
+          targets: ${{ matrix.variant }}
+          set: |
+            *.cache-from=type=gha,scope=${{ matrix.variant }}
+            *.cache-to=type=gha,mode=max,scope=${{ matrix.variant }}

@@ -30,6 +30,7 @@ Targets video (Wan / LTX) and image (Flux / SDXL / Anima) workflows.
 - `aria2` and `huggingface_hub[cli]` baked into the image for model downloads.
 - `HF_TOKEN` and `HF_*` env vars propagated to SSH/non-interactive shells.
 - `HF_HOME` and `TORCH_HOME` default to `/workspace/.cache/huggingface` and `/workspace/.cache/torch` so model weights cached at runtime by `transformers` / `diffusers` / `huggingface_hub` / `torch.hub` persist with the volume across pod swaps. Honors user-provided values.
+- VCS deps (`git+...`) declared by custom nodes are split out of `requirements.in` before `pip-compile`, then installed in a separate non-hashed step. `pip --require-hashes` cannot verify VCS URLs by design. Currently affects: Impact-Pack's `sam2` and WAS-suite's `img2texture` / `cstr` / `ffmpy`. Parent node SHAs are pinned but the VCS URLs themselves still point at upstream HEAD — follow-up to pin them to specific commits.
 
 ### Pre-fork history
 

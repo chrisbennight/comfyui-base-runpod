@@ -109,16 +109,31 @@ RUN set -eux; \
     init_repo ComfyUI-GGUF             city96/ComfyUI-GGUF                "${GGUF_SHA}"
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification.
-# Each file is appended with a forced trailing newline so a node's requirements.txt
-# without a final \n can't fuse its last line into the next file's first line
-# (e.g. WanVideoWrapper's `scipy` + LTXVideo's `torch` -> `scipytorch`).
+#
+# Two passes:
+#   1. PyPI deps go through pip-compile --generate-hashes -> pip install --require-hashes (reproducible, hash-verified).
+#   2. VCS deps (git+/hg+/bzr+/svn+) are filtered out before pip-compile because pip cannot
+#      hash-verify VCS URLs by design. They are installed in a separate, non-hashed step.
+#
+#      As of these node SHAs, the VCS deps are:
+#        - ComfyUI-Impact-Pack -> facebookresearch/sam2 (SAM2 segmentation)
+#        - was-node-suite-comfyui -> WASasquatch/{img2texture, cstr, ffmpy}
+#
+#      Security tradeoff: we pin the parent custom node SHAs, but the VCS URLs themselves
+#      point at upstream HEAD and can drift. Follow-up: pin VCS URLs to specific commits.
+#
+# Each requirements file is appended with a forced trailing newline so a node's
+# requirements.txt without a final \n can't fuse its last line into the next file's first
+# line (e.g. WanVideoWrapper's `scipy` + controlnet_aux's `torch` -> `scipytorch`).
 WORKDIR /tmp/build
-RUN { cat ComfyUI/requirements.txt; echo; } > requirements.in && \
+RUN { cat ComfyUI/requirements.txt; echo; } > requirements.raw && \
     for node_dir in ComfyUI/custom_nodes/*/; do \
         if [ -f "$node_dir/requirements.txt" ]; then \
-            { cat "$node_dir/requirements.txt"; echo; } >> requirements.in; \
+            { cat "$node_dir/requirements.txt"; echo; } >> requirements.raw; \
         fi; \
     done && \
+    grep -E '^(git|hg|bzr|svn)\+' requirements.raw > requirements.vcs.txt || true && \
+    grep -vE '^(git|hg|bzr|svn)\+' requirements.raw > requirements.in && \
     echo "GitPython" >> requirements.in && \
     echo "opencv-python" >> requirements.in && \
     echo "huggingface_hub[cli]" >> requirements.in && \
@@ -134,7 +149,15 @@ RUN { cat ComfyUI/requirements.txt; echo; } > requirements.in && \
     python3.12 -m pip install --no-cache-dir --ignore-installed --require-hashes \
     --index-url https://pypi.org/simple \
     --extra-index-url "${TORCH_INDEX_URL}" \
-    -r requirements.lock
+    -r requirements.lock && \
+    if [ -s requirements.vcs.txt ]; then \
+        echo "Installing VCS deps (cannot be hash-verified):" && \
+        cat requirements.vcs.txt && \
+        python3.12 -m pip install --no-cache-dir --ignore-installed \
+        --index-url https://pypi.org/simple \
+        --extra-index-url "${TORCH_INDEX_URL}" \
+        -r requirements.vcs.txt; \
+    fi
 
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py

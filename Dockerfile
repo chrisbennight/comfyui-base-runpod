@@ -108,12 +108,15 @@ RUN set -eux; \
     init_repo ComfyUI-LTXVideo         Lightricks/ComfyUI-LTXVideo        "${LTXVIDEO_SHA}"; \
     init_repo ComfyUI-GGUF             city96/ComfyUI-GGUF                "${GGUF_SHA}"
 
-# Generate lock file from all requirements (including torch pins), then install with hash verification
+# Generate lock file from all requirements (including torch pins), then install with hash verification.
+# Each file is appended with a forced trailing newline so a node's requirements.txt
+# without a final \n can't fuse its last line into the next file's first line
+# (e.g. WanVideoWrapper's `scipy` + LTXVideo's `torch` -> `scipytorch`).
 WORKDIR /tmp/build
-RUN cat ComfyUI/requirements.txt > requirements.in && \
+RUN { cat ComfyUI/requirements.txt; echo; } > requirements.in && \
     for node_dir in ComfyUI/custom_nodes/*/; do \
         if [ -f "$node_dir/requirements.txt" ]; then \
-            cat "$node_dir/requirements.txt" >> requirements.in; \
+            { cat "$node_dir/requirements.txt"; echo; } >> requirements.in; \
         fi; \
     done && \
     echo "GitPython" >> requirements.in && \

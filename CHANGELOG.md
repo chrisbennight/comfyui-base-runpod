@@ -2,7 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [Unreleased] — fork as `comfyui-runpod`
+
+### Breaking Changes (from upstream `runpod-workers/comfyui-base`)
+
+- **Image renamed** from `runpod/comfyui` (Docker Hub) to `ghcr.io/chrisbennight/comfyui-runpod` (GHCR). No Docker Hub credentials needed; uses `GITHUB_TOKEN`.
+- **New tag scheme**: `:cu128`, `:cu130`, `:vX.Y.Z-cu128`, `:vX.Y.Z-cu130`, `:latest`. The old `slim-cuda12.8` / `cuda13.0` tags are not produced.
+- **Workspace path flattened**: `/workspace/runpod-slim/ComfyUI` → `/workspace/ComfyUI`. The `runpod-slim` subdirectory is gone. Args file moved from `/workspace/runpod-slim/comfyui_args.txt` → `/workspace/comfyui_args.txt`.
+- **Venv path renamed**: `.venv-cu128` → `.venv` (one venv name regardless of CUDA variant).
+- **JupyterLab removed**. Port 8888 no longer exposed; `JUPYTER_PASSWORD` env ignored. Saves ~800 MB.
+- **FileBrowser removed**. Port 8080 no longer exposed; default admin/adminadmin12 login no longer exists. RunPod's UI provides equivalent file browsing. Saves ~50 MB.
+- **CUDA 12.4 → 12.8 migration code dropped** from `start.sh`. This is a fresh image lineage; users coming from upstream `runpod/comfyui:slim-cuda12.4` should detach their old workspace.
+
+### Custom node loadout
+
+Targets video (Wan / LTX) and image (Flux / SDXL / Anima) workflows.
+
+**Removed**: Civicomfy, ComfyUI-RunpodDirect.
+
+**Added**: rgthree-comfy, ComfyUI-Custom-Scripts, ComfyUI-Impact-Pack, ComfyUI-Inspire-Pack, comfyui_controlnet_aux, was-node-suite-comfyui, ComfyUI-VideoHelperSuite, ComfyUI-WanVideoWrapper, ComfyUI-LTXVideo, ComfyUI-GGUF.
+
+**Kept**: ComfyUI-Manager, ComfyUI-KJNodes.
+
+### Added
+
+- `scripts/download-models.sh` — opt-in bootstrap for Anima, Flux, Wan 2.2 GGUF, LTX-Video, upscalers. Triggered by `BOOTSTRAP_MODELS=1` or invoked manually. Idempotent (skips files that already exist), uses `aria2c` with 8 parallel connections.
+- `aria2` and `huggingface_hub[cli]` baked into the image for model downloads.
+- `HF_TOKEN` and `HF_*` env vars propagated to SSH/non-interactive shells.
+
+### Pre-fork history
+
+Below is the changelog inherited from `runpod-workers/comfyui-base`.
+
+---
+
+## [Pre-fork]
 
 ### Breaking Changes
 

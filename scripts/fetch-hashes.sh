@@ -10,11 +10,20 @@
 
 set -euo pipefail
 
+# repo|HCL_VAR_NAME — must match the variable names in docker-bake.hcl
 NODES="
 ltdrdata/ComfyUI-Manager|MANAGER_SHA
 kijai/ComfyUI-KJNodes|KJNODES_SHA
-MoonGoblinDev/Civicomfy|CIVICOMFY_SHA
-MadiatorLabs/ComfyUI-RunpodDirect|RUNPODDIRECT_SHA
+rgthree/rgthree-comfy|RGTHREE_SHA
+pythongosssss/ComfyUI-Custom-Scripts|CUSTOM_SCRIPTS_SHA
+ltdrdata/ComfyUI-Impact-Pack|IMPACT_PACK_SHA
+ltdrdata/ComfyUI-Inspire-Pack|INSPIRE_PACK_SHA
+Fannovel16/comfyui_controlnet_aux|CONTROLNET_AUX_SHA
+WASasquatch/was-node-suite-comfyui|WAS_SUITE_SHA
+Kosinkadink/ComfyUI-VideoHelperSuite|VIDEOHELPER_SHA
+kijai/ComfyUI-WanVideoWrapper|WANVIDEO_SHA
+Lightricks/ComfyUI-LTXVideo|LTXVIDEO_SHA
+city96/ComfyUI-GGUF|GGUF_SHA
 "
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

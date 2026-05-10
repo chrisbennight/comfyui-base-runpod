@@ -4,19 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: "Push to Docker Hub"
+        description: "Push to GHCR"
         type: boolean
         required: true
         default: true
 
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_REF: ghcr.io/${{ github.repository_owner }}/comfyui-runpod
+
 jobs:
   dev:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need history to resolve HEAD SHA cleanly
 
-      - name: Clear space to remove unused folders
+      - name: Free disk space
         run: |
           rm -rf /usr/share/dotnet
           rm -rf /opt/ghc
@@ -29,30 +38,45 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         if: inputs.push == true
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute build provenance
+        id: provenance
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push CUDA 13.0 dev image
         uses: docker/bake-action@v5
+        env:
+          IMAGE_REF: ${{ env.IMAGE_REF }}
+          TAG: dev
+          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
+          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
         with:
           push: ${{ inputs.push }}
           files: ./docker-bake.hcl
-          targets: |
-            devpush-cuda13
+          targets: devpush-cu130
 
       - name: Clean up Docker build cache
         run: |
           docker builder prune -af --filter "until=1h"
           docker system prune -af --volumes
 
-      - name: Build and push regular dev image
+      - name: Build and push CUDA 12.8 dev image
         uses: docker/bake-action@v5
+        env:
+          IMAGE_REF: ${{ env.IMAGE_REF }}
+          TAG: dev
+          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
+          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
         with:
           push: ${{ inputs.push }}
           files: ./docker-bake.hcl
-          targets: |
-            devpush
+          targets: devpush-cu128

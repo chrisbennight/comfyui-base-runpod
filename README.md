@@ -1,36 +1,155 @@
-[![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
+# comfyui-runpod
 
-Run the latest ComfyUI. All dependencies are pre-installed in the image. On first boot, ComfyUI is copied to your workspace — when you see `[ComfyUI-Manager] All startup tasks have been completed.` in the logs, it's ready to use.
+Slim ComfyUI image for [RunPod](https://www.runpod.io/), tailored for video (Wan / LTX) and image (Flux / SDXL / Anima) workflows. Models live on a RunPod **Network Volume** mounted at `/workspace`, so they persist across pod swaps and don't need to be re-downloaded.
 
-## Access
+Forked from [`runpod-workers/comfyui-base`](https://github.com/runpod-workers/comfyui-base).
 
-- `8188`: ComfyUI web UI
-- `8080`: FileBrowser (admin / adminadmin12)
-- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`)
-- `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
+## Images
+
+Pulled from GitHub Container Registry — public, no login required:
+
+| Tag | When to use |
+|---|---|
+| `ghcr.io/chrisbennight/comfyui-runpod:cu128` | RTX 30/40 series, A100, H100, L40S — most RunPod GPUs |
+| `ghcr.io/chrisbennight/comfyui-runpod:cu130` | RTX 5090, B200, anything Blackwell (driver 575+) |
+| `ghcr.io/chrisbennight/comfyui-runpod:latest` | Alias for `:cu128` |
+| `ghcr.io/chrisbennight/comfyui-runpod:vX.Y.Z-cu128` | Pinned release |
+| `ghcr.io/chrisbennight/comfyui-runpod:vX.Y.Z-cu130` | Pinned release, Blackwell |
+
+The `cu130` image uses CUDA 13.0 + PyTorch cu130 wheels and runs on Blackwell as well as Hopper/Ada with a recent driver. Pick whichever matches your pod's GPU.
+
+## RunPod template
+
+Recommended template settings:
+
+| Field | Value |
+|---|---|
+| Container image | `ghcr.io/chrisbennight/comfyui-runpod:cu128` (or `:cu130`) |
+| Container disk | 20 GB (just for transient working files) |
+| Volume disk | **0 GB** — use a Network Volume instead (see below) |
+| Network Volume | Attach to `/workspace` (size = your model library + outputs) |
+| Exposed HTTP ports | `8188` |
+| Exposed TCP ports | `22` |
+| Environment | `PUBLIC_KEY=<your ssh key>` (optional but recommended) |
+| Environment | `BOOTSTRAP_MODELS=1` (optional — runs `download-models.sh` on first boot) |
+
+A 100 GB Network Volume is enough for Anima + a few Flux/Wan/LTX checkpoints. Network Volumes are pinned to a data center, so when you spin up new pods, request the same DC.
+
+## Ports
+
+- `8188` — ComfyUI web UI
+- `22` — SSH (set `PUBLIC_KEY` env or check the pod log for a one-time root password)
+
+> JupyterLab (8888) and FileBrowser (8080) are intentionally **not** included — RunPod's web UI provides equivalent file browsing and a web terminal, and dropping them removes ~850 MB from the image.
 
 ## Pre-installed custom nodes
 
-- ComfyUI-Manager
-- ComfyUI-KJNodes
-- Civicomfy
-- ComfyUI-RunpodDirect
+| Node | Purpose |
+|---|---|
+| ComfyUI-Manager | Install/update more nodes from the UI |
+| ComfyUI-KJNodes | kijai's general utility nodes |
+| rgthree-comfy | Workflow QoL (power-prompt, fast groups) |
+| ComfyUI-Custom-Scripts | pythongosssss QoL (favorites, autocomplete) |
+| ComfyUI-Impact-Pack | FaceDetailer, regional prompting |
+| ComfyUI-Inspire-Pack | Workflow batching, prompt utilities |
+| comfyui_controlnet_aux | ControlNet preprocessors |
+| was-node-suite-comfyui | Image utility nodes |
+| ComfyUI-VideoHelperSuite | Video I/O (mp4 muxing, frame loaders) |
+| ComfyUI-WanVideoWrapper | Wan 2.x video |
+| ComfyUI-LTXVideo | LTX-Video |
+| ComfyUI-GGUF | Quantized model loaders (essential for video on ≤24 GB VRAM) |
 
-## Source Code
+Anything else you install via ComfyUI-Manager lives under `/workspace/ComfyUI/custom_nodes/` and persists with the volume.
 
-This is an open source template. Source code available at: [github.com/runpod-workers/comfyui-base](https://github.com/runpod-workers/comfyui-base)
+## Models
 
-## Custom Arguments
+The image ships **without** model weights. On a fresh Network Volume, two options:
 
-Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
+### Option A — opt-in bootstrap script
+
+Set `BOOTSTRAP_MODELS=1` on the pod. On first boot, `download-models.sh` pulls a default set into `/workspace/ComfyUI/models/` using `aria2c`:
+
+| Set | Files | Approx size |
+|---|---|---|
+| `anima` | Cosmos-derived 2B base + Qwen text encoder + Qwen VAE | ~6 GB |
+| `flux-dev-fp8` | Flux.1-dev fp8 single-file | ~12 GB |
+| `wan-gguf` | Wan 2.2 14B I2V Q5_K_M + UMT5 + Wan VAE | ~14 GB |
+| `ltx-video` | LTX-Video 0.9.5 + T5 XXL | ~10 GB |
+
+Customize the set with `MODEL_SETS=anima,wan-gguf` (default: all four). Pass `HF_TOKEN=hf_xxx` for gated models. Re-runs are idempotent — files that exist are skipped.
+
+To run the bootstrap manually after the pod is up:
+
+```bash
+# inside the pod
+MODEL_SETS=anima,wan-gguf bash /usr/local/bin/download-models.sh
+```
+
+### Option B — bring your own
+
+```bash
+cd /workspace/ComfyUI/models/diffusion_models
+huggingface-cli download <repo> <file> --local-dir .
+# or
+aria2c -x 8 <url>
+```
+
+Drop files into the standard ComfyUI subdirectories: `checkpoints/`, `diffusion_models/`, `vae/`, `text_encoders/`, `clip/`, `loras/`, `upscale_models/`, etc.
+
+## Custom ComfyUI args
+
+Edit `/workspace/comfyui_args.txt` (one flag per line, `#` comments ignored):
 
 ```
 --max-batch-size 8
 --preview-method auto
+--reserve-vram 1.5
 ```
 
-## Directory Structure
+Restart the pod (or `kill` ComfyUI inside the pod) for changes to apply.
 
-- `/workspace/runpod-slim/ComfyUI`: ComfyUI install
-- `/workspace/runpod-slim/comfyui_args.txt`: ComfyUI args
-- `/workspace/runpod-slim/filebrowser.db`: FileBrowser DB
+## Directory layout (on the Network Volume)
+
+```
+/workspace/
+├── ComfyUI/
+│   ├── models/         # all model weights — persists across pods
+│   ├── output/         # generated images / videos
+│   ├── user/           # workflows, settings, Manager cache
+│   ├── custom_nodes/   # baked nodes + anything Manager installs
+│   └── .venv/          # python venv (uses --system-site-packages)
+├── .cache/
+│   ├── huggingface/    # HF_HOME — transformers/diffusers cache
+│   └── torch/          # TORCH_HOME — torch.hub cache
+└── comfyui_args.txt    # extra CLI flags for ComfyUI
+```
+
+## Environment variables
+
+| Var | Purpose |
+|---|---|
+| `PUBLIC_KEY` | SSH public key for root. If unset, a random root password is generated and printed to logs. |
+| `BOOTSTRAP_MODELS` | Set to `1` to run `download-models.sh` on first boot. |
+| `MODEL_SETS` | Comma-separated set names for the bootstrap (`anima,flux-dev-fp8,flux-dev-fp16,wan-gguf,ltx-video,upscalers`). |
+| `HF_TOKEN` | Hugging Face token, used by the bootstrap and propagated to SSH/Jupyter shells. |
+| `HF_HOME` | Hugging Face cache root. Defaults to `/workspace/.cache/huggingface` so cached model weights survive pod swaps. |
+| `TORCH_HOME` | PyTorch hub cache root. Defaults to `/workspace/.cache/torch` for the same reason. |
+| `COMFYUI_MODELS_DIR` | Override the bootstrap target dir (default `/workspace/ComfyUI/models`). |
+
+## Local development
+
+```bash
+# Build the cu128 image into the local docker daemon
+docker buildx bake -f docker-bake.hcl dev
+
+# Run with a host-mounted workspace
+docker run --rm --gpus all \
+  -p 8188:8188 -p 2222:22 \
+  -e PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" \
+  -v "$PWD/workspace:/workspace" \
+  ghcr.io/chrisbennight/comfyui-runpod:dev
+```
+
+## License
+
+GPL-3.0 (inherited from upstream).

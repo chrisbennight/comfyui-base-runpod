@@ -1,24 +1,64 @@
-variable "TAG" {
-  default = "slim"
+variable "IMAGE_REF" {
+  default = "ghcr.io/chrisbennight/comfyui-runpod"
 }
 
-# === Version Pins (single source of truth) ===
+variable "TAG" {
+  default = "latest"
+}
+
+# === ComfyUI core ===
 variable "COMFYUI_VERSION" {
   default = "v0.18.2"
 }
+
+# === Custom node pins (commit SHAs from scripts/fetch-hashes.sh) ===
 variable "MANAGER_SHA" {
-  default = "66108ccdbc8c"
+  default = "8079db221de4"
 }
 variable "KJNODES_SHA" {
-  default = "4e1458c2417d"
+  default = "fca78c93f034"
 }
-variable "CIVICOMFY_SHA" {
-  default = "555e984bbcb0"
+variable "RGTHREE_SHA" {
+  default = "738105af5fb1"
 }
-variable "RUNPODDIRECT_SHA" {
-  default = "8be7b2206b75"
+variable "CUSTOM_SCRIPTS_SHA" {
+  default = "609f3afaa74b"
 }
-# Regular image (cu128)
+variable "IMPACT_PACK_SHA" {
+  default = "429d0159ad42"
+}
+variable "INSPIRE_PACK_SHA" {
+  default = "d23db9aa544d"
+}
+variable "CONTROLNET_AUX_SHA" {
+  default = "e8b689a513c3"
+}
+variable "WAS_SUITE_SHA" {
+  default = "ea935d1044ae"
+}
+variable "VIDEOHELPER_SHA" {
+  default = "2984ec4c4b93"
+}
+variable "WANVIDEO_SHA" {
+  default = "d18cdb18597f"
+}
+variable "LTXVIDEO_SHA" {
+  default = "2acf7af8991f"
+}
+variable "GGUF_SHA" {
+  default = "6ea2651e7df6"
+}
+
+# === Build provenance (populated by CI from env; empty for local builds) ===
+variable "GIT_SHA" {
+  default = ""
+}
+variable "BUILD_DATE" {
+  default = ""
+}
+
+# === PyTorch / CUDA ===
+# Default image: CUDA 12.8 (cu128 wheels)
 variable "TORCH_VERSION" {
   default = "2.10.0+cu128"
 }
@@ -28,95 +68,99 @@ variable "TORCHVISION_VERSION" {
 variable "TORCHAUDIO_VERSION" {
   default = "2.10.0+cu128"
 }
-# 5090 image (cu130) — can diverge from regular when needed
-variable "TORCH_VERSION_5090" {
+
+# Blackwell (RTX 5090 / B200) image: CUDA 13.0 (cu130 wheels)
+variable "TORCH_VERSION_CU130" {
   default = "2.10.0+cu130"
 }
-variable "TORCHVISION_VERSION_5090" {
+variable "TORCHVISION_VERSION_CU130" {
   default = "0.25.0+cu130"
 }
-variable "TORCHAUDIO_VERSION_5090" {
+variable "TORCHAUDIO_VERSION_CU130" {
   default = "2.10.0+cu130"
-}
-variable "FILEBROWSER_VERSION" {
-  default = "v2.59.0"
-}
-variable "FILEBROWSER_SHA256" {
-  default = "8cd8c3baecb086028111b912f252a6e3169737fa764b5c510139e81f9da87799"
 }
 
 group "default" {
-  targets = ["common", "dev"]
+  targets = ["dev"]
 }
 
-# Common settings for all targets (defaults to regular CUDA 12.8 / cu128)
+# Common settings shared by all targets (defaults to CUDA 12.8 / cu128)
 target "common" {
   context    = "."
   dockerfile = "Dockerfile"
   platforms  = ["linux/amd64"]
+  labels = {
+    "org.opencontainers.image.title"       = "comfyui-runpod"
+    "org.opencontainers.image.description" = "Slim ComfyUI image for RunPod (video + image workflows)"
+    "org.opencontainers.image.source"      = "https://github.com/chrisbennight/comfyui-base-runpod"
+    "org.opencontainers.image.url"         = "https://github.com/chrisbennight/comfyui-base-runpod"
+    "org.opencontainers.image.licenses"    = "GPL-3.0-or-later"
+    "org.opencontainers.image.version"     = TAG
+    "org.opencontainers.image.revision"    = GIT_SHA
+    "org.opencontainers.image.created"     = BUILD_DATE
+  }
   args = {
     COMFYUI_VERSION     = COMFYUI_VERSION
     MANAGER_SHA         = MANAGER_SHA
     KJNODES_SHA         = KJNODES_SHA
-    CIVICOMFY_SHA       = CIVICOMFY_SHA
-    RUNPODDIRECT_SHA    = RUNPODDIRECT_SHA
+    RGTHREE_SHA         = RGTHREE_SHA
+    CUSTOM_SCRIPTS_SHA  = CUSTOM_SCRIPTS_SHA
+    IMPACT_PACK_SHA     = IMPACT_PACK_SHA
+    INSPIRE_PACK_SHA    = INSPIRE_PACK_SHA
+    CONTROLNET_AUX_SHA  = CONTROLNET_AUX_SHA
+    WAS_SUITE_SHA       = WAS_SUITE_SHA
+    VIDEOHELPER_SHA     = VIDEOHELPER_SHA
+    WANVIDEO_SHA        = WANVIDEO_SHA
+    LTXVIDEO_SHA        = LTXVIDEO_SHA
+    GGUF_SHA            = GGUF_SHA
     TORCH_VERSION       = TORCH_VERSION
     TORCHVISION_VERSION = TORCHVISION_VERSION
     TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION
-    FILEBROWSER_VERSION = FILEBROWSER_VERSION
-    FILEBROWSER_SHA256  = FILEBROWSER_SHA256
     CUDA_VERSION_DASH   = "12-8"
     TORCH_INDEX_SUFFIX  = "cu128"
   }
 }
 
-# Regular ComfyUI image (CUDA 12.8 — default)
-target "regular" {
+# Production image, CUDA 12.8 (covers RTX 30/40, A100, H100, L40S, etc.)
+target "cu128" {
   inherits = ["common"]
   tags = [
-    "runpod/comfyui:${TAG}-cuda12.8",
-    "runpod/comfyui:cuda12.8",
-    "runpod/comfyui:latest",
+    "${IMAGE_REF}:${TAG}-cu128",
+    "${IMAGE_REF}:cu128",
+    "${IMAGE_REF}:latest",
   ]
 }
 
-# Dev image for local testing
+# Production image, CUDA 13.0 (RTX 5090 / Blackwell / B200)
+target "cu130" {
+  inherits = ["common"]
+  tags = [
+    "${IMAGE_REF}:${TAG}-cu130",
+    "${IMAGE_REF}:cu130",
+  ]
+  args = {
+    TORCH_VERSION       = TORCH_VERSION_CU130
+    TORCHVISION_VERSION = TORCHVISION_VERSION_CU130
+    TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION_CU130
+    CUDA_VERSION_DASH   = "13-0"
+    TORCH_INDEX_SUFFIX  = "cu130"
+  }
+}
+
+# Local dev build (loaded into the local docker daemon, not pushed)
 target "dev" {
   inherits = ["common"]
-  tags = ["runpod/comfyui:dev"]
-  output = ["type=docker"]
+  tags     = ["${IMAGE_REF}:dev"]
+  output   = ["type=docker"]
 }
 
-# Dev push targets (for CI pushing dev tags, without overriding latest)
-target "devpush" {
+# CI-pushed dev tags (separate from :latest so manual testing doesn't override prod)
+target "devpush-cu128" {
   inherits = ["common"]
-  tags = ["runpod/comfyui:dev-cuda12.8"]
+  tags     = ["${IMAGE_REF}:dev-cu128"]
 }
 
-target "devpush-cuda13" {
-  inherits = ["common"]
-  tags = ["runpod/comfyui:dev-cuda13.0"]
-  args = {
-    TORCH_VERSION       = TORCH_VERSION_5090
-    TORCHVISION_VERSION = TORCHVISION_VERSION_5090
-    TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION_5090
-    CUDA_VERSION_DASH   = "13-0"
-    TORCH_INDEX_SUFFIX  = "cu130"
-  }
-}
-
-# CUDA 13.0 image (Blackwell / RTX 5090+)
-target "cuda13" {
-  inherits = ["common"]
-  tags = [
-    "runpod/comfyui:${TAG}-cuda13.0",
-    "runpod/comfyui:cuda13.0",
-  ]
-  args = {
-    TORCH_VERSION       = TORCH_VERSION_5090
-    TORCHVISION_VERSION = TORCHVISION_VERSION_5090
-    TORCHAUDIO_VERSION  = TORCHAUDIO_VERSION_5090
-    CUDA_VERSION_DASH   = "13-0"
-    TORCH_INDEX_SUFFIX  = "cu130"
-  }
+target "devpush-cu130" {
+  inherits = ["cu130"]
+  tags     = ["${IMAGE_REF}:dev-cu130"]
 }

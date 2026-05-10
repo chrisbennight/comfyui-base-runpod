@@ -9,8 +9,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG COMFYUI_VERSION
 ARG MANAGER_SHA
 ARG KJNODES_SHA
-ARG CIVICOMFY_SHA
-ARG RUNPODDIRECT_SHA
+ARG RGTHREE_SHA
+ARG CUSTOM_SCRIPTS_SHA
+ARG IMPACT_PACK_SHA
+ARG INSPIRE_PACK_SHA
+ARG CONTROLNET_AUX_SHA
+ARG WAS_SUITE_SHA
+ARG VIDEOHELPER_SHA
+ARG WANVIDEO_SHA
+ARG LTXVIDEO_SHA
+ARG GGUF_SHA
 ARG TORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
@@ -49,38 +57,56 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
 ENV PATH=/usr/local/cuda/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
 
-# Download pinned source archives
+# Download pinned ComfyUI source
 WORKDIR /tmp/build
 RUN curl -fSL "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/${COMFYUI_VERSION}.tar.gz" -o comfyui.tar.gz && \
     mkdir -p ComfyUI && tar xzf comfyui.tar.gz --strip-components=1 -C ComfyUI && rm comfyui.tar.gz
 
+# Download pinned custom node sources
+# Each entry: <subdir> <owner/repo> <ARG name>
 WORKDIR /tmp/build/ComfyUI/custom_nodes
-RUN curl -fSL "https://github.com/ltdrdata/ComfyUI-Manager/archive/${MANAGER_SHA}.tar.gz" -o manager.tar.gz && \
-    mkdir -p ComfyUI-Manager && tar xzf manager.tar.gz --strip-components=1 -C ComfyUI-Manager && rm manager.tar.gz && \
-    curl -fSL "https://github.com/kijai/ComfyUI-KJNodes/archive/${KJNODES_SHA}.tar.gz" -o kjnodes.tar.gz && \
-    mkdir -p ComfyUI-KJNodes && tar xzf kjnodes.tar.gz --strip-components=1 -C ComfyUI-KJNodes && rm kjnodes.tar.gz && \
-    curl -fSL "https://github.com/MoonGoblinDev/Civicomfy/archive/${CIVICOMFY_SHA}.tar.gz" -o civicomfy.tar.gz && \
-    mkdir -p Civicomfy && tar xzf civicomfy.tar.gz --strip-components=1 -C Civicomfy && rm civicomfy.tar.gz && \
-    curl -fSL "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect/archive/${RUNPODDIRECT_SHA}.tar.gz" -o runpoddirect.tar.gz && \
-    mkdir -p ComfyUI-RunpodDirect && tar xzf runpoddirect.tar.gz --strip-components=1 -C ComfyUI-RunpodDirect && rm runpoddirect.tar.gz
+RUN set -eux; \
+    fetch() { local dir="$1" repo="$2" sha="$3"; \
+      curl -fSL "https://github.com/${repo}/archive/${sha}.tar.gz" -o /tmp/n.tgz && \
+      mkdir -p "$dir" && tar xzf /tmp/n.tgz --strip-components=1 -C "$dir" && rm /tmp/n.tgz; }; \
+    fetch ComfyUI-Manager         ltdrdata/ComfyUI-Manager          "${MANAGER_SHA}"; \
+    fetch ComfyUI-KJNodes         kijai/ComfyUI-KJNodes             "${KJNODES_SHA}"; \
+    fetch rgthree-comfy           rgthree/rgthree-comfy             "${RGTHREE_SHA}"; \
+    fetch ComfyUI-Custom-Scripts  pythongosssss/ComfyUI-Custom-Scripts "${CUSTOM_SCRIPTS_SHA}"; \
+    fetch ComfyUI-Impact-Pack     ltdrdata/ComfyUI-Impact-Pack      "${IMPACT_PACK_SHA}"; \
+    fetch ComfyUI-Inspire-Pack    ltdrdata/ComfyUI-Inspire-Pack     "${INSPIRE_PACK_SHA}"; \
+    fetch comfyui_controlnet_aux  Fannovel16/comfyui_controlnet_aux "${CONTROLNET_AUX_SHA}"; \
+    fetch was-node-suite-comfyui  WASasquatch/was-node-suite-comfyui "${WAS_SUITE_SHA}"; \
+    fetch ComfyUI-VideoHelperSuite Kosinkadink/ComfyUI-VideoHelperSuite "${VIDEOHELPER_SHA}"; \
+    fetch ComfyUI-WanVideoWrapper kijai/ComfyUI-WanVideoWrapper     "${WANVIDEO_SHA}"; \
+    fetch ComfyUI-LTXVideo        Lightricks/ComfyUI-LTXVideo       "${LTXVIDEO_SHA}"; \
+    fetch ComfyUI-GGUF            city96/ComfyUI-GGUF               "${GGUF_SHA}"
 
 # Init git repos with upstream remotes so ComfyUI-Manager can detect versions
 # and users can update via Manager at their own risk
-RUN cd /tmp/build/ComfyUI && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && git tag "${COMFYUI_VERSION}" && \
-    git remote add origin https://github.com/comfyanonymous/ComfyUI.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-Manager && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-Manager ${MANAGER_SHA}" && \
-    git remote add origin https://github.com/ltdrdata/ComfyUI-Manager.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-KJNodes && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-KJNodes ${KJNODES_SHA}" && \
-    git remote add origin https://github.com/kijai/ComfyUI-KJNodes.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/Civicomfy && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "Civicomfy ${CIVICOMFY_SHA}" && \
-    git remote add origin https://github.com/MoonGoblinDev/Civicomfy.git && \
-    cd /tmp/build/ComfyUI/custom_nodes/ComfyUI-RunpodDirect && \
-    git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
-    git remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
+RUN set -eux; \
+    init_repo() { local dir="$1" repo="$2" ref="$3"; \
+      cd "/tmp/build/ComfyUI/custom_nodes/$dir" && \
+      git init -q && git add -A && \
+      git -c user.name=- -c user.email=- commit -q -m "${dir} ${ref}" && \
+      git remote add origin "https://github.com/${repo}.git"; }; \
+    cd /tmp/build/ComfyUI && \
+      git init -q && git add -A && \
+      git -c user.name=- -c user.email=- commit -q -m "ComfyUI ${COMFYUI_VERSION}" && \
+      git tag "${COMFYUI_VERSION}" && \
+      git remote add origin https://github.com/comfyanonymous/ComfyUI.git; \
+    init_repo ComfyUI-Manager          ltdrdata/ComfyUI-Manager           "${MANAGER_SHA}"; \
+    init_repo ComfyUI-KJNodes          kijai/ComfyUI-KJNodes              "${KJNODES_SHA}"; \
+    init_repo rgthree-comfy            rgthree/rgthree-comfy              "${RGTHREE_SHA}"; \
+    init_repo ComfyUI-Custom-Scripts   pythongosssss/ComfyUI-Custom-Scripts "${CUSTOM_SCRIPTS_SHA}"; \
+    init_repo ComfyUI-Impact-Pack      ltdrdata/ComfyUI-Impact-Pack       "${IMPACT_PACK_SHA}"; \
+    init_repo ComfyUI-Inspire-Pack     ltdrdata/ComfyUI-Inspire-Pack      "${INSPIRE_PACK_SHA}"; \
+    init_repo comfyui_controlnet_aux   Fannovel16/comfyui_controlnet_aux  "${CONTROLNET_AUX_SHA}"; \
+    init_repo was-node-suite-comfyui   WASasquatch/was-node-suite-comfyui "${WAS_SUITE_SHA}"; \
+    init_repo ComfyUI-VideoHelperSuite Kosinkadink/ComfyUI-VideoHelperSuite "${VIDEOHELPER_SHA}"; \
+    init_repo ComfyUI-WanVideoWrapper  kijai/ComfyUI-WanVideoWrapper      "${WANVIDEO_SHA}"; \
+    init_repo ComfyUI-LTXVideo         Lightricks/ComfyUI-LTXVideo        "${LTXVIDEO_SHA}"; \
+    init_repo ComfyUI-GGUF             city96/ComfyUI-GGUF                "${GGUF_SHA}"
 
 # Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
@@ -92,9 +118,7 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     done && \
     echo "GitPython" >> requirements.in && \
     echo "opencv-python" >> requirements.in && \
-    echo "jupyter" >> requirements.in && \
-    echo "jupyter-resource-usage" >> requirements.in && \
-    echo "jupyterlab-nvdashboard" >> requirements.in && \
+    echo "huggingface_hub[cli]" >> requirements.in && \
     echo "torch==${TORCH_VERSION}" >> constraints.txt && \
     echo "torchvision==${TORCHVISION_VERSION}" >> constraints.txt && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> constraints.txt && \
@@ -124,14 +148,9 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
-ENV FILEBROWSER_CONFIG=/workspace/runpod-slim/.filebrowser.json
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
-
-# ---- FileBrowser version pin (set in docker-bake.hcl) ----
-ARG FILEBROWSER_VERSION
-ARG FILEBROWSER_SHA256
 
 # Update and install runtime dependencies, CUDA, and common tools
 RUN apt-get update && \
@@ -159,6 +178,7 @@ RUN apt-get update && \
     procps \
     openssl \
     ffmpeg \
+    aria2 \
     && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
@@ -168,15 +188,9 @@ RUN apt-get update && \
     && rm cuda-keyring_1.1-1_all.deb \
     && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
 
-# Copy Python packages, executables, and Jupyter data from builder stage
+# Copy Python packages and executables from builder stage
 COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY --from=builder /usr/local/share/jupyter /usr/local/share/jupyter
-
-# Register Jupyter extensions (pip --ignore-installed skips post-install hooks)
-RUN mkdir -p /usr/local/etc/jupyter/jupyter_server_config.d && \
-    echo '{"ServerApp":{"jpserver_extensions":{"jupyter_server_terminals":true,"jupyterlab":true,"jupyter_resource_usage":true,"jupyterlab_nvdashboard":true}}}' \
-    > /usr/local/etc/jupyter/jupyter_server_config.d/extensions.json
 
 # Copy baked ComfyUI + custom nodes from builder stage
 COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
@@ -184,12 +198,6 @@ COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
 # Remove uv to force ComfyUI-Manager to use pip (uv doesn't respect --system-site-packages properly)
 RUN pip uninstall -y uv 2>/dev/null || true && \
     rm -f /usr/local/bin/uv /usr/local/bin/uvx
-
-# Install FileBrowser (pinned version with checksum)
-RUN curl -fSL "https://github.com/filebrowser/filebrowser/releases/download/${FILEBROWSER_VERSION}/linux-amd64-filebrowser.tar.gz" -o /tmp/fb.tar.gz && \
-    echo "${FILEBROWSER_SHA256}  /tmp/fb.tar.gz" | sha256sum -c - && \
-    tar xzf /tmp/fb.tar.gz -C /usr/local/bin filebrowser && \
-    rm /tmp/fb.tar.gz
 
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}
@@ -201,20 +209,22 @@ ENV NVIDIA_DISABLE_REQUIRE=true
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 
-# Jupyter is included in the lock file and installed in the builder stage
-
 # Configure SSH for root login
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     mkdir -p /run/sshd && \
     rm -f /etc/ssh/ssh_host_*
 
-# Create workspace directory
-RUN mkdir -p /workspace/runpod-slim
-WORKDIR /workspace/runpod-slim
+# Workspace = mount point for the RunPod Network Volume (or pod volume)
+RUN mkdir -p /workspace
+WORKDIR /workspace
 
-# Expose ports
-EXPOSE 8188 22 8888 8080
+# Copy bootstrap scripts
+COPY scripts/download-models.sh /usr/local/bin/download-models.sh
+RUN chmod +x /usr/local/bin/download-models.sh
+
+# Expose ports: ComfyUI + SSH
+EXPOSE 8188 22
 
 # Copy start script
 COPY start.sh /start.sh

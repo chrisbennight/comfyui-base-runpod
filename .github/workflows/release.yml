@@ -3,27 +3,33 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*" # Trigger on version tags like v1.0.0, v2.1.0, etc.
+      - "v[0-9]+.[0-9]+.[0-9]+*"
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., v2.8.0)"
+        description: "Version to release (e.g., v0.1.0)"
         required: true
         type: string
 
 permissions:
-  contents: write # Required for creating GitHub releases
+  contents: write   # create GitHub release
+  packages: write   # push to ghcr.io
+
+env:
+  IMAGE_REF: ghcr.io/${{ github.repository_owner }}/comfyui-runpod
 
 jobs:
   release:
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history + tags for the verification step
 
-      - name: Clear space to remove unused folders
+      - name: Free disk space
         run: |
           rm -rf /usr/share/dotnet
           rm -rf /opt/ghc
@@ -36,84 +42,104 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set environment variables
+      - name: Resolve release version
+        id: version
         run: |
-          echo "IMAGE_REF=runpod/comfyui" >> $GITHUB_ENV
-
-          # Determine version based on trigger type
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Manual trigger: use input version
             VERSION="${{ github.event.inputs.version }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=true" >> $GITHUB_ENV
           elif [[ "${{ github.event_name }}" == "release" ]]; then
-            # GitHub Release published event
             VERSION="${{ github.event.release.tag_name }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           else
-            # Tag trigger: use tag name (remove refs/tags/ prefix)
-            VERSION=${GITHUB_REF#refs/tags/}
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
+            VERSION="${GITHUB_REF#refs/tags/}"
           fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}"
 
-          # Export TAG for docker-bake.hcl variable override
-          echo "TAG=${RELEASE_VERSION}" >> $GITHUB_ENV
+      - name: Verify tag points at HEAD and tree is clean
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Git tag '$VERSION' does not exist in this repo. Create and push the tag before releasing."
+            exit 1
+          fi
+          TAG_SHA=$(git rev-parse "$VERSION")
+          HEAD_SHA=$(git rev-parse HEAD)
+          if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+            echo "::error::Tag '$VERSION' points at $TAG_SHA but HEAD is $HEAD_SHA."
+            echo "::error::The release workflow must run on the exact commit the tag points to."
+            echo "::error::If you used workflow_dispatch, re-run it with the tag selected as the ref (or push the tag and let it trigger automatically)."
+            exit 1
+          fi
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo "::error::Working tree has uncommitted changes."
+            exit 1
+          fi
+          echo "Verified: $VERSION at $TAG_SHA (clean tree)"
 
-      - name: Build and push CUDA 13.0 image
+      - name: Compute build provenance
+        id: provenance
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push CUDA 13.0 image (Blackwell)
         uses: docker/bake-action@v5
         env:
-          TAG: ${{ env.RELEASE_VERSION }}
+          TAG: ${{ steps.version.outputs.version }}
+          IMAGE_REF: ${{ env.IMAGE_REF }}
+          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
+          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
         with:
           push: true
           files: ./docker-bake.hcl
-          targets: |
-            cuda13
+          targets: cu130
 
       - name: Clean up Docker build cache
         run: |
           docker builder prune -af --filter "until=1h"
           docker system prune -af --volumes
 
-      - name: Build and push regular image
+      - name: Build and push CUDA 12.8 image
         uses: docker/bake-action@v5
         env:
-          TAG: ${{ env.RELEASE_VERSION }}
+          TAG: ${{ steps.version.outputs.version }}
+          IMAGE_REF: ${{ env.IMAGE_REF }}
+          GIT_SHA: ${{ steps.provenance.outputs.git_sha }}
+          BUILD_DATE: ${{ steps.provenance.outputs.build_date }}
         with:
           push: true
           files: ./docker-bake.hcl
-          targets: |
-            regular
+          targets: cu128
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
         if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          name: ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Release Summary
+      - name: Release summary
         run: |
-          echo "🚀 Release completed!"
-          echo "Version: ${{ env.RELEASE_VERSION }}"
-          echo "Docker Images:"
-          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-cuda12.8 (CUDA 12.8)"
-          echo " - ${{ env.IMAGE_REF }}:cuda12.8"
-          echo " - ${{ env.IMAGE_REF }}:latest"
-          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-cuda13.0 (CUDA 13.0)"
-          echo " - ${{ env.IMAGE_REF }}:cuda13.0"
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Trigger: Manual workflow dispatch"
-          else
-            echo "Trigger: GitHub release (tag: ${{ github.ref_name }})"
-          fi
+          V="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.provenance.outputs.git_sha }}"
+          echo "Release ${V} (commit ${SHA})"
+          echo "Images pushed:"
+          echo "  ${IMAGE_REF}:${V}-cu128"
+          echo "  ${IMAGE_REF}:cu128"
+          echo "  ${IMAGE_REF}:latest"
+          echo "  ${IMAGE_REF}:${V}-cu130"
+          echo "  ${IMAGE_REF}:cu130"
+          echo ""
+          echo "Inspect provenance:"
+          echo "  docker buildx imagetools inspect ${IMAGE_REF}:${V}-cu128 --format '{{json .Manifest}}'"
+          echo "  docker pull ${IMAGE_REF}:${V}-cu128 && docker inspect ${IMAGE_REF}:${V}-cu128 --format '{{json .Config.Labels}}'"
